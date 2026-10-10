@@ -1,4 +1,5 @@
 import json
+import http.client
 import threading
 import unittest
 from http.server import ThreadingHTTPServer
@@ -94,6 +95,36 @@ class HttpApiTests(unittest.TestCase):
         with self.assertRaises(HTTPError) as error:
             urlopen(request, timeout=3)
         self.assertEqual(error.exception.code, 400)
+
+    def test_assessments_stream_to_connected_clients(self):
+        connection = http.client.HTTPConnection("127.0.0.1", self.server.server_address[1], timeout=3)
+        try:
+            connection.request("GET", "/events")
+            response = connection.getresponse()
+            self.assertEqual(response.status, 200)
+            self.assertIn("text/event-stream", response.getheader("Content-Type"))
+            self.assertEqual(response.readline(), b"retry: 3000\n")
+            self.assertEqual(response.readline(), b"\n")
+
+            body = json.dumps({
+                "transactionId": "sse-high-amount",
+                "accountId": "sse-customer",
+                "amount": 6000,
+            }).encode("utf-8")
+            request = Request(
+                f"{self.base_url}/transactions",
+                data=body,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urlopen(request, timeout=3) as posted:
+                self.assertEqual(posted.status, 201)
+
+            self.assertEqual(response.readline(), b"event: assessment\n")
+            payload = response.readline().decode("utf-8")
+            self.assertIn('"transactionId":"sse-high-amount"', payload)
+        finally:
+            connection.close()
 
 
 if __name__ == "__main__":
